@@ -1468,6 +1468,7 @@ class Blocks(BlockContext):
         if inline is None:
             inline = utils.ipython_check() and (self.auth is None)
         if inline:
+            self.is_nuvolos = utils.nuvolos_check()
             if self.auth is not None:
                 print(
                     "Warning: authentication is not supported inline. Please"
@@ -1476,7 +1477,13 @@ class Blocks(BlockContext):
             try:
                 from IPython.display import HTML, Javascript, display  # type: ignore
 
-                if self.share and self.share_url:
+                if self.is_nuvolos:
+                    display(
+                        HTML(
+                            f'<div><iframe src="/absproxy/{self.server_port}" width="{self.width}" height="{self.height}" allow="autoplay; camera; microphone; clipboard-read; clipboard-write;" frameborder="0" allowfullscreen></iframe></div>'
+                        )
+                    )
+                elif self.share and self.share_url:
                     while not networking.url_ok(self.share_url):
                         time.sleep(0.25)
                     display(

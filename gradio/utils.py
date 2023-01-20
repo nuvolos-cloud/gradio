@@ -163,6 +163,17 @@ def colab_check() -> bool:
     return is_colab
 
 
+def nuvolos_check() -> bool:
+    """
+    Check if interface is launching from a Nuvolos app
+    :return is_colab (bool): True or False
+    """
+    is_nuvolos = False
+    if os.getenv("HPC_USER") and os.getenv("NV_IS_SHARED"):
+        is_nuvolos = True
+    return is_nuvolos
+
+
 def ipython_check() -> bool:
     """
     Check if interface is launching from iPython (not colab)
