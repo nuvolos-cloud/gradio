@@ -1492,7 +1492,7 @@ class Blocks(BlockContext):
                         )
                     display(
                         HTML(
-                            f"""<div><iframe src="{self.proxy_url}" width="{self.width}" allow="autoplay; camera; microphone; clipboard-read; clipboard-write;" frameborder="0" allowfullscreen onload='javascript:(function(o){{o.style.height=o.contentWindow.document.body.scrollHeight+"px";}}(this));' style="height:{self.height};width:100%;border:none;overflow:hidden;"></iframe></div>"""
+                            f"""<div><iframe src="{self.proxy_url}" width="{self.width}" allow="autoplay; camera; microphone; clipboard-read; clipboard-write;" frameborder="0" allowfullscreen onload='javascript:(function(o){{o.style.height=o.contentWindow.document.body.scrollHeight+"px";}}(this));' style="height:{self.height}px;width:100%;border:none;overflow:hidden;"></iframe></div>"""
                         )
                     )
                 elif self.share and self.share_url:
