@@ -1252,7 +1252,7 @@ class Blocks(BlockContext):
         server_name: str | None = None,
         server_port: int | None = None,
         show_tips: bool = False,
-        height: int = 500,
+        height: int = 1200,
         width: int | str = "100%",
         encrypt: bool = False,
         favicon_path: str | None = None,
@@ -1492,7 +1492,7 @@ class Blocks(BlockContext):
                         )
                     display(
                         HTML(
-                            f"""<div><iframe src="{self.proxy_url}" width="{self.width}" allow="autoplay; camera; microphone; clipboard-read; clipboard-write;" frameborder="0" allowfullscreen onload='javascript:(function(o){{o.style.height=o.contentWindow.document.body.scrollHeight+"px";}}(this));' style="height:1000px;width:100%;border:none;overflow:hidden;"></iframe></div>"""
+                            f"""<div><iframe src="{self.proxy_url}" width="{self.width}" allow="autoplay; camera; microphone; clipboard-read; clipboard-write;" frameborder="0" allowfullscreen onload='javascript:(function(o){{o.style.height=o.contentWindow.document.body.scrollHeight+"px";}}(this));' style="height:{self.height};width:100%;border:none;overflow:hidden;"></iframe></div>"""
                         )
                     )
                 elif self.share and self.share_url:
