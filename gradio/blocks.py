@@ -2195,22 +2195,22 @@ Received outputs:
 
                 if self.is_nuvolos:
                     if os.getenv("VSCODE_PROXY_URI"):
-                        self.proxy_url = os.getenv("VSCODE_PROXY_URI").replace(
+                        proxy_url = os.getenv("VSCODE_PROXY_URI").replace(
                             r"{{port}}", str(self.server_port)
                         )
                     else:
                         import socket
 
-                        self.proxy_url = (
+                        proxy_url = (
                             "https://"
                             + socket.gethostname().replace("nv-deployment-", "")[0:36]
                             + f".app.az.nuvolos.cloud/proxy/{self.server_port}/"
                         )
-                    display(
-                        HTML(
-                            f"""<div><iframe src="{self.proxy_url}" width="{self.width}" allow="autoplay; camera; microphone; clipboard-read; clipboard-write;" frameborder="0" allowfullscreen onload='javascript:(function(o){{o.style.height=o.contentWindow.document.body.scrollHeight+"px";}}(this));' style="height:{self.height}px;width:100%;border:none;overflow:hidden;"></iframe></div>"""
-                        )
+
+                    artifact = HTML(
+                        f"""<div><iframe src="{proxy_url}" width="{self.width}" allow="autoplay; camera; microphone; clipboard-read; clipboard-write;" frameborder="0" allowfullscreen onload='javascript:(function(o){{o.style.height=o.contentWindow.document.body.scrollHeight+"px";}}(this));' style="height:{self.height}px;width:100%;border:none;overflow:hidden;"></iframe></div>"""
                     )
+
                 elif self.share and self.share_url:
                     while not networking.url_ok(self.share_url):
                         time.sleep(0.25)
