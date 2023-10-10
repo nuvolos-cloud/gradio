@@ -15,6 +15,9 @@ export function resolve_root(
 	root_path: string,
 	prioritize_base: boolean
 ): string {
+	if (base_url.includes("nuvolos.cloud")) {
+		base_url += "/proxy/7860/";
+	}
 	if (root_path.startsWith("http://") || root_path.startsWith("https://")) {
 		return prioritize_base ? base_url : root_path;
 	}
