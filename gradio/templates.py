@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import typing
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Literal
 
 import numpy as np
 from PIL.Image import Image
@@ -55,12 +54,12 @@ class Webcam(components.Image):
         self,
         value: str | Image | np.ndarray | None = None,
         *,
-        shape: Tuple[int, int] | None = None,
-        image_mode: str = "RGB",
+        shape: tuple[int, int] | None = None,
+        image_mode: Literal["RGB", "L"] = "RGB",
         invert_colors: bool = False,
-        source: str = "webcam",
-        tool: str | None = None,
-        type: str = "numpy",
+        source: Literal["webcam"] = "webcam",
+        tool: Literal["editor", "select", "sketch", "color-sketch"] | None = None,
+        type: Literal["numpy", "pil", "filepath"] = "numpy",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = True,
@@ -68,6 +67,8 @@ class Webcam(components.Image):
         streaming: bool = False,
         elem_id: str | None = None,
         mirror_webcam: bool = True,
+        brush_radius: float | None = None,
+        brush_color: str = "#000000",
         **kwargs,
     ):
         super().__init__(
@@ -85,6 +86,8 @@ class Webcam(components.Image):
             streaming=streaming,
             elem_id=elem_id,
             mirror_webcam=mirror_webcam,
+            brush_radius=brush_radius,
+            brush_color=brush_color,
             **kwargs,
         )
 
@@ -100,12 +103,12 @@ class Sketchpad(components.Image):
         self,
         value: str | Image | np.ndarray | None = None,
         *,
-        shape: Tuple[int, int] = (28, 28),
-        image_mode: str = "L",
+        shape: tuple[int, int] = (28, 28),
+        image_mode: Literal["L"] = "L",
         invert_colors: bool = True,
-        source: str = "canvas",
-        tool: str | None = None,
-        type: str = "numpy",
+        source: Literal["canvas"] = "canvas",
+        tool: Literal["editor", "select", "sketch", "color-sketch"] | None = None,
+        type: Literal["numpy", "pil", "filepath"] = "numpy",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = True,
@@ -113,6 +116,8 @@ class Sketchpad(components.Image):
         streaming: bool = False,
         elem_id: str | None = None,
         mirror_webcam: bool = True,
+        brush_radius: float | None = None,
+        brush_color: str = "#000000",
         **kwargs,
     ):
         super().__init__(
@@ -130,6 +135,8 @@ class Sketchpad(components.Image):
             streaming=streaming,
             elem_id=elem_id,
             mirror_webcam=mirror_webcam,
+            brush_radius=brush_radius,
+            brush_color=brush_color,
             **kwargs,
         )
 
@@ -145,12 +152,12 @@ class Paint(components.Image):
         self,
         value: str | Image | np.ndarray | None = None,
         *,
-        shape: Tuple[int, int] | None = None,
-        image_mode: str = "RGB",
+        shape: tuple[int, int] | None = None,
+        image_mode: Literal["RGB"] = "RGB",
         invert_colors: bool = False,
-        source: str = "canvas",
-        tool: str = "color-sketch",
-        type: str = "numpy",
+        source: Literal["canvas"] = "canvas",
+        tool: Literal["color-sketch"] = "color-sketch",
+        type: Literal["numpy", "pil", "filepath"] = "numpy",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = True,
@@ -158,6 +165,8 @@ class Paint(components.Image):
         streaming: bool = False,
         elem_id: str | None = None,
         mirror_webcam: bool = True,
+        brush_radius: float | None = None,
+        brush_color: str = "#000000",
         **kwargs,
     ):
         super().__init__(
@@ -175,6 +184,8 @@ class Paint(components.Image):
             streaming=streaming,
             elem_id=elem_id,
             mirror_webcam=mirror_webcam,
+            brush_radius=brush_radius,
+            brush_color=brush_color,
             **kwargs,
         )
 
@@ -190,12 +201,12 @@ class ImageMask(components.Image):
         self,
         value: str | Image | np.ndarray | None = None,
         *,
-        shape: Tuple[int, int] | None = None,
-        image_mode: str = "RGB",
+        shape: tuple[int, int] | None = None,
+        image_mode: Literal["RGB", "L"] = "RGB",
         invert_colors: bool = False,
-        source: str = "upload",
-        tool: str = "sketch",
-        type: str = "numpy",
+        source: Literal["upload"] = "upload",
+        tool: Literal["sketch"] = "sketch",
+        type: Literal["numpy", "pil", "filepath"] = "numpy",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = True,
@@ -203,6 +214,8 @@ class ImageMask(components.Image):
         streaming: bool = False,
         elem_id: str | None = None,
         mirror_webcam: bool = True,
+        brush_radius: float | None = None,
+        brush_color: str = "#000000",
         **kwargs,
     ):
         super().__init__(
@@ -220,6 +233,8 @@ class ImageMask(components.Image):
             streaming=streaming,
             elem_id=elem_id,
             mirror_webcam=mirror_webcam,
+            brush_radius=brush_radius,
+            brush_color=brush_color,
             **kwargs,
         )
 
@@ -235,12 +250,12 @@ class ImagePaint(components.Image):
         self,
         value: str | Image | np.ndarray | None = None,
         *,
-        shape: Tuple[int, int] | None = None,
-        image_mode: str = "RGB",
+        shape: tuple[int, int] | None = None,
+        image_mode: Literal["RGB", "L"] = "RGB",
         invert_colors: bool = False,
-        source: str = "upload",
-        tool: str = "color-sketch",
-        type: str = "numpy",
+        source: Literal["upload"] = "upload",
+        tool: Literal["color-sketch"] = "color-sketch",
+        type: Literal["numpy", "pil", "filepath"] = "numpy",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = True,
@@ -248,6 +263,8 @@ class ImagePaint(components.Image):
         streaming: bool = False,
         elem_id: str | None = None,
         mirror_webcam: bool = True,
+        brush_radius: float | None = None,
+        brush_color: str = "#000000",
         **kwargs,
     ):
         super().__init__(
@@ -265,6 +282,8 @@ class ImagePaint(components.Image):
             streaming=streaming,
             elem_id=elem_id,
             mirror_webcam=mirror_webcam,
+            brush_radius=brush_radius,
+            brush_color=brush_color,
             **kwargs,
         )
 
@@ -280,12 +299,12 @@ class Pil(components.Image):
         self,
         value: str | Image | np.ndarray | None = None,
         *,
-        shape: Tuple[int, int] | None = None,
-        image_mode: str = "RGB",
+        shape: tuple[int, int] | None = None,
+        image_mode: Literal["RGB", "L"] = "RGB",
         invert_colors: bool = False,
-        source: str = "upload",
-        tool: str | None = None,
-        type: str = "pil",
+        source: Literal["upload", "webcam", "canvas"] = "upload",
+        tool: Literal["editor", "select", "sketch", "color-sketch"] | None = None,
+        type: Literal["pil"] = "pil",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = None,
@@ -293,6 +312,8 @@ class Pil(components.Image):
         streaming: bool = False,
         elem_id: str | None = None,
         mirror_webcam: bool = True,
+        brush_radius: float | None = None,
+        brush_color: str = "#000000",
         **kwargs,
     ):
         super().__init__(
@@ -310,6 +331,8 @@ class Pil(components.Image):
             streaming=streaming,
             elem_id=elem_id,
             mirror_webcam=mirror_webcam,
+            brush_radius=brush_radius,
+            brush_color=brush_color,
             **kwargs,
         )
 
@@ -325,8 +348,8 @@ class PlayableVideo(components.Video):
         self,
         value: str | Callable | None = None,
         *,
-        format: str | None = "mp4",
-        source: str = "upload",
+        format: Literal["mp4"] | None = "mp4",
+        source: Literal["upload", "webcam"] = "upload",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = None,
@@ -360,10 +383,10 @@ class Microphone(components.Audio):
 
     def __init__(
         self,
-        value: str | Tuple[int, np.ndarray] | Callable | None = None,
+        value: str | tuple[int, np.ndarray] | Callable | None = None,
         *,
-        source: str = "microphone",
-        type: str = "numpy",
+        source: Literal["microphone"] = "microphone",
+        type: Literal["numpy", "filepath"] = "numpy",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = None,
@@ -395,10 +418,10 @@ class Files(components.File):
 
     def __init__(
         self,
-        value: str | typing.List[str] | Callable | None = None,
+        value: str | list[str] | Callable | None = None,
         *,
-        file_count: str = "multiple",
-        type: str = "file",
+        file_count: Literal["multiple"] = "multiple",
+        type: Literal["file", "binary"] = "file",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = None,
@@ -428,16 +451,16 @@ class Numpy(components.Dataframe):
 
     def __init__(
         self,
-        value: typing.List[typing.List[Any]] | Callable | None = None,
+        value: list[list[Any]] | Callable | None = None,
         *,
-        headers: typing.List[str] | None = None,
-        row_count: int | Tuple[int, str] = (1, "dynamic"),
-        col_count: int | Tuple[int, str] | None = None,
-        datatype: str | typing.List[str] = "str",
-        type: str = "numpy",
+        headers: list[str] | None = None,
+        row_count: int | tuple[int, str] = (1, "dynamic"),
+        col_count: int | tuple[int, str] | None = None,
+        datatype: str | list[str] = "str",
+        type: Literal["numpy"] = "numpy",
         max_rows: int | None = 20,
         max_cols: int | None = None,
-        overflow_row_behaviour: str = "paginate",
+        overflow_row_behaviour: Literal["paginate", "show_ends"] = "paginate",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = None,
@@ -475,16 +498,16 @@ class Matrix(components.Dataframe):
 
     def __init__(
         self,
-        value: typing.List[typing.List[Any]] | Callable | None = None,
+        value: list[list[Any]] | Callable | None = None,
         *,
-        headers: typing.List[str] | None = None,
-        row_count: int | Tuple[int, str] = (1, "dynamic"),
-        col_count: int | Tuple[int, str] | None = None,
-        datatype: str | typing.List[str] = "str",
-        type: str = "array",
+        headers: list[str] | None = None,
+        row_count: int | tuple[int, str] = (1, "dynamic"),
+        col_count: int | tuple[int, str] | None = None,
+        datatype: str | list[str] = "str",
+        type: Literal["array"] = "array",
         max_rows: int | None = 20,
         max_cols: int | None = None,
-        overflow_row_behaviour: str = "paginate",
+        overflow_row_behaviour: Literal["paginate", "show_ends"] = "paginate",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = None,
@@ -522,16 +545,16 @@ class List(components.Dataframe):
 
     def __init__(
         self,
-        value: typing.List[typing.List[Any]] | Callable | None = None,
+        value: list[list[Any]] | Callable | None = None,
         *,
-        headers: typing.List[str] | None = None,
-        row_count: int | Tuple[int, str] = (1, "dynamic"),
-        col_count: int | Tuple[int, str] = 1,
-        datatype: str | typing.List[str] = "str",
-        type: str = "array",
+        headers: list[str] | None = None,
+        row_count: int | tuple[int, str] = (1, "dynamic"),
+        col_count: Literal[1] = 1,
+        datatype: str | list[str] = "str",
+        type: Literal["array"] = "array",
         max_rows: int | None = 20,
         max_cols: int | None = None,
-        overflow_row_behaviour: str = "paginate",
+        overflow_row_behaviour: Literal["paginate", "show_ends"] = "paginate",
         label: str | None = None,
         show_label: bool = True,
         interactive: bool | None = None,

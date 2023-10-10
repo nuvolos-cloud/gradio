@@ -9,12 +9,19 @@ on:
         - 'demo/**'
 
 jobs:
+  comment-notebook-start:
+    uses: "./.github/workflows/comment-queue.yml"
+    secrets:
+      gh_token: ${{ secrets.COMMENT_TOKEN }}
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      message: notebooks~pending~null
   check-notebooks:
     name: Generate Notebooks and Check 
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}

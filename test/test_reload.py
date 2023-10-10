@@ -1,20 +1,59 @@
+import dataclasses
 from pathlib import Path
-from unittest.mock import patch
+from typing import List
+
+import pytest
 
 import gradio
-from gradio.reload import run_in_reload_mode
+import gradio as gr
+from gradio.networking import Server
+from gradio.reload import _setup_config
 
 
-@patch("gradio.reload.os.system")
-@patch("gradio.reload.sys")
-def test_run_in_reload_mode(mock_sys, mock_system_call):
+def build_demo():
+    with gr.Blocks() as demo:
+        gr.Textbox("")
 
-    mock_sys.argv = ["gradio", "demo/calculator/run.py"]
-    run_in_reload_mode()
-    reload_command = mock_system_call.call_args[0][0]
-    gradio_dir = Path(gradio.__file__).parent
-    demo_dir = Path("demo/calculator/run.py").resolve().parent
+    return demo
 
-    assert "uvicorn demo.calculator.run:demo.app" in reload_command
-    assert f'--reload-dir "{gradio_dir}"' in reload_command
-    assert f'--reload-dir "{demo_dir}"' in reload_command
+
+@dataclasses.dataclass
+class Config:
+    filename: str
+    path: Path
+    watch_dirs: List[str]
+    demo_name: str
+
+
+class TestReload:
+    @pytest.fixture(autouse=True)
+    def argv(self):
+        return ["demo/calculator/run.py"]
+
+    @pytest.fixture
+    def config(self, monkeypatch, argv) -> Config:
+        monkeypatch.setattr("sys.argv", ["gradio"] + argv)
+        return Config(*_setup_config())
+
+    @pytest.fixture(params=[{}])
+    def reloader(self, config):
+        reloader = Server(config)
+        reloader.should_exit = True
+        yield reloader
+        reloader.close()
+
+    def test_config_default_app(self, config):
+        assert config.filename == "demo.calculator.run"
+
+    @pytest.mark.parametrize("argv", [["demo/calculator/run.py", "test"]])
+    def test_config_custom_app(self, config):
+        assert config.filename == "demo.calculator.run"
+        assert config.demo_name == "test"
+
+    def test_config_watch_gradio(self, config):
+        gradio_dir = str(Path(gradio.__file__).parent)
+        assert gradio_dir in config.watch_dirs
+
+    def test_config_watch_app(self, config):
+        demo_dir = str(Path("demo/calculator/run.py").resolve().parent)
+        assert demo_dir in config.watch_dirs

@@ -15,12 +15,14 @@ demo = gr.Interface(
     diff_texts,
     [
         gr.Textbox(
-            label="Initial text",
+            label="Text 1",
+            info="Initial text",
             lines=3,
             value="The quick brown fox jumped over the lazy dogs.",
         ),
         gr.Textbox(
-            label="Text to compare",
+            label="Text 2",
+            info="Text to compare",
             lines=3,
             value="The fast brown fox jumps over lazy dogs.",
         ),
@@ -28,7 +30,9 @@ demo = gr.Interface(
     gr.HighlightedText(
         label="Diff",
         combine_adjacent=True,
-    ).style(color_map={"+": "red", "-": "green"}),
+        show_legend=True,
+        color_map={"+": "red", "-": "green"}),
+    theme=gr.themes.Base()
 )
 if __name__ == "__main__":
     demo.launch()

@@ -3,25 +3,39 @@ of the on-page-load event, which is defined in gr.Blocks().load()."""
 
 from __future__ import annotations
 
-import warnings
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Set
+from functools import wraps
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
+
+from gradio_client.documentation import document, set_documentation_group
 
 from gradio.blocks import Block
+from gradio.context import Context
+from gradio.deprecation import warn_deprecation
+from gradio.helpers import EventData
 from gradio.utils import get_cancel_function
 
 if TYPE_CHECKING:  # Only import for type checking (is False at runtime).
-    from gradio.components import Component, StatusTracker
+    from gradio.components import Component
+
+set_documentation_group("events")
 
 
 def set_cancel_events(
-    block: Block, event_name: str, cancels: None | Dict[str, Any] | List[Dict[str, Any]]
+    triggers: Sequence[EventListenerMethod],
+    cancels: None | dict[str, Any] | list[dict[str, Any]],
 ):
     if cancels:
         if not isinstance(cancels, list):
             cancels = [cancels]
         cancel_fn, fn_indices_to_cancel = get_cancel_function(cancels)
-        block.set_event_trigger(
-            event_name,
+
+        if Context.root_block is None:
+            raise AttributeError(
+                "Cannot cancel {self.event_name} outside of a gradio.Blocks context."
+            )
+
+        Context.root_block.set_event_trigger(
+            triggers,
             cancel_fn,
             inputs=None,
             outputs=None,
@@ -32,692 +46,486 @@ def set_cancel_events(
 
 
 class EventListener(Block):
-    pass
+    def __init__(self: Any):
+        for event_listener_class in EventListener.__subclasses__():
+            if isinstance(self, event_listener_class):
+                event_listener_class.__init__(self)
 
 
+class Dependency(dict):
+    def __init__(self, key_vals, dep_index, fn):
+        super().__init__(key_vals)
+        self.fn = fn
+        self.then = EventListenerMethod(
+            None,
+            "then",
+            trigger_after=dep_index,
+            trigger_only_on_success=False,
+        )
+        """
+        Triggered after directly preceding event is completed, regardless of success or failure.
+        """
+        self.success = EventListenerMethod(
+            None,
+            "success",
+            trigger_after=dep_index,
+            trigger_only_on_success=True,
+        )
+        """
+        Triggered after directly preceding event is completed, if it was successful.
+        """
+
+    def __call__(self, *args, **kwargs):
+        return self.fn(*args, **kwargs)
+
+
+class EventListenerMethod:
+    """
+    Triggered on an event deployment.
+    """
+
+    def __init__(
+        self,
+        trigger: Block | None,
+        event_name: str,
+        show_progress: Literal["full", "minimal", "hidden"] = "full",
+        callback: Callable | None = None,
+        trigger_after: int | None = None,
+        trigger_only_on_success: bool = False,
+    ):
+        self.trigger = trigger
+        self.event_name = event_name
+        self.show_progress = show_progress
+        self.callback = callback
+        self.trigger_after = trigger_after
+        self.trigger_only_on_success = trigger_only_on_success
+
+    def __call__(
+        self,
+        fn: Callable | None | Literal["decorator"] = "decorator",
+        inputs: Component | Sequence[Component] | set[Component] | None = None,
+        outputs: Component | Sequence[Component] | None = None,
+        api_name: str | None | Literal[False] = None,
+        status_tracker: None = None,
+        scroll_to_output: bool = False,
+        show_progress: Literal["full", "minimal", "hidden"] | None = None,
+        queue: bool | None = None,
+        batch: bool = False,
+        max_batch_size: int = 4,
+        preprocess: bool = True,
+        postprocess: bool = True,
+        cancels: dict[str, Any] | list[dict[str, Any]] | None = None,
+        every: float | None = None,
+        _js: str | None = None,
+    ) -> Dependency:
+        """
+        Parameters:
+            fn: the function to call when this event is triggered. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
+            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
+            outputs: List of gradio.components to use as outputs. If the function returns no outputs, this should be an empty list.
+            api_name: Defines how the endpoint appears in the API docs. Can be a string, None, or False. If False, the endpoint will not be exposed in the api docs. If set to None, the endpoint will be exposed in the api docs as an unnamed endpoint, although this behavior will be changed in Gradio 4.0. If set to a string, the endpoint will be exposed in the api docs with the given name.
+            status_tracker: Deprecated and has no effect.
+            scroll_to_output: If True, will scroll to output component on completion
+            show_progress: If True, will show progress animation while pending
+            queue: If True, will place the request on the queue, if the queue has been enabled. If False, will not put this event on the queue, even if the queue has been enabled. If None, will use the queue setting of the gradio app.
+            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
+            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
+            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
+            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
+            cancels: A list of other events to cancel when this listener is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method. Functions that have not yet run (or generators that are iterating) will be cancelled, but functions that are currently running will be allowed to finish.
+            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        """
+        if fn == "decorator":
+
+            def wrapper(func):
+                self.__call__(
+                    func,
+                    inputs,
+                    outputs,
+                    api_name,
+                    status_tracker,
+                    scroll_to_output,
+                    show_progress,
+                    queue,
+                    batch,
+                    max_batch_size,
+                    preprocess,
+                    postprocess,
+                    cancels,
+                    every,
+                    _js,
+                )
+
+                @wraps(func)
+                def inner(*args, **kwargs):
+                    return func(*args, **kwargs)
+
+                return inner
+
+            return Dependency({}, None, wrapper)
+
+        if status_tracker:
+            warn_deprecation(
+                "The 'status_tracker' parameter has been deprecated and has no effect."
+            )
+        if self.event_name == "stop":
+            warn_deprecation(
+                "The `stop` event on Video and Audio has been deprecated and will be remove in a future version. Use `ended` instead."
+            )
+
+        if isinstance(self, Streamable):
+            self.check_streamable()
+        if isinstance(show_progress, bool):
+            show_progress = "full" if show_progress else "hidden"
+
+        if Context.root_block is None:
+            raise AttributeError(
+                "Cannot call {self.event_name} outside of a gradio.Blocks context."
+            )
+
+        dep, dep_index = Context.root_block.set_event_trigger(
+            [self],
+            fn,
+            inputs,
+            outputs,
+            preprocess=preprocess,
+            postprocess=postprocess,
+            scroll_to_output=scroll_to_output,
+            show_progress=show_progress
+            if show_progress is not None
+            else self.show_progress,
+            api_name=api_name,
+            js=_js,
+            queue=queue,
+            batch=batch,
+            max_batch_size=max_batch_size,
+            every=every,
+            trigger_after=self.trigger_after,
+            trigger_only_on_success=self.trigger_only_on_success,
+        )
+        set_cancel_events([self], cancels)
+        if self.callback:
+            self.callback()
+        return Dependency(dep, dep_index, fn)
+
+
+def on(
+    triggers: Sequence[EventListenerMethod] | EventListenerMethod | None = None,
+    fn: Callable | None | Literal["decorator"] = "decorator",
+    inputs: Component | list[Component] | set[Component] | None = None,
+    outputs: Component | list[Component] | None = None,
+    *,
+    api_name: str | None | Literal[False] = None,
+    scroll_to_output: bool = False,
+    show_progress: Literal["full", "minimal", "hidden"] = "full",
+    queue: bool | None = None,
+    batch: bool = False,
+    max_batch_size: int = 4,
+    preprocess: bool = True,
+    postprocess: bool = True,
+    cancels: dict[str, Any] | list[dict[str, Any]] | None = None,
+    every: float | None = None,
+    _js: str | None = None,
+) -> Dependency:
+    """
+    Parameters:
+        triggers: List of triggers to listen to, e.g. [btn.click, number.change]. If None, will listen to changes to any inputs.
+        fn: the function to call when this event is triggered. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
+        inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
+        outputs: List of gradio.components to use as outputs. If the function returns no outputs, this should be an empty list.
+        api_name: Defines how the endpoint appears in the API docs. Can be a string, None, or False. If False, the endpoint will not be exposed in the api docs. If set to None, the endpoint will be exposed in the api docs as an unnamed endpoint, although this behavior will be changed in Gradio 4.0. If set to a string, the endpoint will be exposed in the api docs with the given name.
+        scroll_to_output: If True, will scroll to output component on completion
+        show_progress: If True, will show progress animation while pending
+        queue: If True, will place the request on the queue, if the queue has been enabled. If False, will not put this event on the queue, even if the queue has been enabled. If None, will use the queue setting of the gradio app.
+        batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
+        max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
+        preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
+        postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
+        cancels: A list of other events to cancel when this listener is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method. Functions that have not yet run (or generators that are iterating) will be cancelled, but functions that are currently running will be allowed to finish.
+        every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+    """
+    from gradio.components.base import Component
+
+    if isinstance(triggers, EventListenerMethod):
+        triggers = [triggers]
+    if isinstance(inputs, Component):
+        inputs = [inputs]
+
+    if fn == "decorator":
+
+        def wrapper(func):
+            on(
+                triggers,
+                fn=func,
+                inputs=inputs,
+                outputs=outputs,
+                api_name=api_name,
+                scroll_to_output=scroll_to_output,
+                show_progress=show_progress,
+                queue=queue,
+                batch=batch,
+                max_batch_size=max_batch_size,
+                preprocess=preprocess,
+                postprocess=postprocess,
+                cancels=cancels,
+                every=every,
+                _js=_js,
+            )
+
+            @wraps(func)
+            def inner(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return inner
+
+        return Dependency({}, None, wrapper)
+
+    if Context.root_block is None:
+        raise Exception("Cannot call on() outside of a gradio.Blocks context.")
+    if triggers is None:
+        triggers = [input.change for input in inputs] if inputs is not None else []
+
+    dep, dep_index = Context.root_block.set_event_trigger(
+        triggers,
+        fn,
+        inputs,
+        outputs,
+        preprocess=preprocess,
+        postprocess=postprocess,
+        scroll_to_output=scroll_to_output,
+        show_progress=show_progress,
+        api_name=api_name,
+        js=_js,
+        queue=queue,
+        batch=batch,
+        max_batch_size=max_batch_size,
+        every=every,
+    )
+    set_cancel_events(triggers, cancels)
+    return Dependency(dep, dep_index, fn)
+
+
+@document("*change", inherit=True)
 class Changeable(EventListener):
-    def change(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+    def __init__(self):
+        self.change = EventListenerMethod(self, "change")
         """
-        This event is triggered when the component's input value changes (e.g. when the user types in a textbox
-        or uploads an image). This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the component's value changes either because of user input (e.g. a user types in a textbox) OR because of a function update (e.g. an image receives a value from the output of an event trigger).
+        See `.input()` for a listener that is only triggered by user input.
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
-        dep = self.set_event_trigger(
-            "change",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "change", cancels)
-        return dep
 
 
+@document("*input", inherit=True)
+class Inputable(EventListener):
+    def __init__(self):
+        self.input = EventListenerMethod(self, "input")
+        """
+        This listener is triggered when the user changes the value of the component.
+        """
+
+
+@document("*click", inherit=True)
 class Clickable(EventListener):
-    def click(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue=None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+    def __init__(self):
+        self.click = EventListenerMethod(self, "click")
         """
-        This event is triggered when the component (e.g. a button) is clicked.
-        This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the component (e.g. a button) is clicked.
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
-
-        dep = self.set_event_trigger(
-            "click",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "click", cancels)
-        return dep
 
 
+@document("*submit", inherit=True)
 class Submittable(EventListener):
-    def submit(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+    def __init__(self):
+        self.submit = EventListenerMethod(self, "submit")
         """
-        This event is triggered when the user presses the Enter key while the component (e.g. a textbox) is focused.
-        This method can be used when this component is in a Gradio Blocks.
-
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the user presses the Enter key while the component (e.g. a textbox) is focused.
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
-
-        dep = self.set_event_trigger(
-            "submit",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "submit", cancels)
-        return dep
 
 
+@document("*edit", inherit=True)
 class Editable(EventListener):
-    def edit(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+    def __init__(self):
+        self.edit = EventListenerMethod(self, "edit")
         """
-        This event is triggered when the user edits the component (e.g. image) using the
-        built-in editor. This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the user edits the component (e.g. image) using the
+        built-in editor.
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
-
-        dep = self.set_event_trigger(
-            "edit",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "edit", cancels)
-        return dep
 
 
+@document("*clear", inherit=True)
 class Clearable(EventListener):
-    def clear(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+    def __init__(self):
+        self.clear = EventListenerMethod(self, "clear")
         """
-        This event is triggered when the user clears the component (e.g. image or audio)
-        using the X button for the component. This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the user clears the component (e.g. image or audio)
+        using the X button for the component.
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
-
-        dep = self.set_event_trigger(
-            "submit",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "submit", cancels)
-        return dep
 
 
+@document("*play", "*pause", "*stop", "*end", inherit=True)
 class Playable(EventListener):
-    def play(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+    def __init__(self):
+        self.play = EventListenerMethod(self, "play")
         """
-        This event is triggered when the user plays the component (e.g. audio or video).
-        This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the user plays the component (e.g. audio or video).
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
 
-        dep = self.set_event_trigger(
-            "play",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "play", cancels)
-        return dep
-
-    def pause(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+        self.pause = EventListenerMethod(self, "pause")
         """
-        This event is triggered when the user pauses the component (e.g. audio or video).
-        This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the media stops playing for any reason (e.g. audio or video).
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
 
-        dep = self.set_event_trigger(
-            "pause",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "pause", cancels)
-        return dep
-
-    def stop(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+        self.stop = EventListenerMethod(self, "stop")
         """
-        This event is triggered when the user stops the component (e.g. audio or video).
-        This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the user reaches the end of the media track (e.g. audio or video).
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
 
-        dep = self.set_event_trigger(
-            "stop",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "stop", cancels)
-        return dep
+        self.end = EventListenerMethod(self, "end")
+        """
+        This listener is triggered when the user reaches the end of the media track (e.g. audio or video).
+        """
 
 
+@document("*stream", inherit=True)
 class Streamable(EventListener):
-    def stream(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        status_tracker: StatusTracker | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = False,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
-        """
-        This event is triggered when the user streams the component (e.g. a live webcam
-        component). This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: the function to wrap an interface around. Often a machine learning model's prediction function. Each parameter of the function corresponds to one input component, and the function should return a single value or a tuple of values, with each element in the tuple corresponding to one output component.
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
-        """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
-        self.streaming = True
-
-        if status_tracker:
-            warnings.warn(
-                "The 'status_tracker' parameter has been deprecated and has no effect."
-            )
-
-        dep = self.set_event_trigger(
+    def __init__(self):
+        self.streaming: bool
+        self.stream = EventListenerMethod(
+            self,
             "stream",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
+            show_progress="hidden",
+            callback=lambda: setattr(self, "streaming", True),
         )
-        set_cancel_events(self, "stream", cancels)
-        return dep
-
-
-class Blurrable(EventListener):
-    def blur(
-        self,
-        fn: Callable | None,
-        inputs: Component | List[Component] | Set[Component] | None = None,
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: Dict[str, Any] | List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
         """
-        This event is triggered when the component's is unfocused/blurred (e.g. when the user clicks outside of a textbox). This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: Callable function
-            inputs: List of gradio.components to use as inputs. If the function takes no inputs, this should be an empty list.
-            outputs: List of gradio.components to use as inputs. If the function returns no outputs, this should be an empty list.
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the user streams the component (e.g. a live webcam
+        component).
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
 
-        self.set_event_trigger(
-            "blur",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
-        )
-        set_cancel_events(self, "blur", cancels)
+    def check_streamable(self):
+        pass
 
 
+class StreamableOutput(EventListener):
+    def __init__(self):
+        self.streaming: bool
+
+    def stream_output(self, y, output_id: str, first_chunk: bool) -> tuple[bytes, Any]:
+        raise NotImplementedError
+
+
+@document("*start_recording", "*stop_recording", inherit=True)
+class Recordable(EventListener):
+    def __init__(self):
+        self.start_recording = EventListenerMethod(self, "start_recording")
+        """
+        This listener is triggered when the user starts recording with the component (e.g. audio or video).
+        """
+
+        self.stop_recording = EventListenerMethod(self, "stop_recording")
+        """
+        This listener is triggered when the user stops recording with the component (e.g. audio or video).
+        """
+
+
+@document("*focus", "*blur", inherit=True)
+class Focusable(EventListener):
+    def __init__(self):
+        self.focus = EventListenerMethod(self, "focus")
+        """
+        This listener is triggered when the component is focused (e.g. when the user clicks inside a textbox).
+        """
+
+        self.blur = EventListenerMethod(self, "blur")
+        """
+        This listener is triggered when the component's is unfocused/blurred (e.g. when the user clicks outside of a textbox). 
+        """
+
+
+@document("*upload", inherit=True)
 class Uploadable(EventListener):
-    def upload(
-        self,
-        fn: Callable | None,
-        inputs: List[Component],
-        outputs: Component | List[Component] | None = None,
-        api_name: str | None = None,
-        scroll_to_output: bool = False,
-        show_progress: bool = True,
-        queue: bool | None = None,
-        batch: bool = False,
-        max_batch_size: int = 4,
-        preprocess: bool = True,
-        postprocess: bool = True,
-        cancels: List[Dict[str, Any]] | None = None,
-        every: float | None = None,
-        _js: str | None = None,
-    ):
+    def __init__(self):
+        self.upload = EventListenerMethod(self, "upload")
         """
-        This event is triggered when the user uploads a file into the component (e.g. when the user uploads a video into a video component). This method can be used when this component is in a Gradio Blocks.
-
-        Parameters:
-            fn: Callable function
-            inputs: List of inputs
-            outputs: List of outputs
-            api_name: Defining this parameter exposes the endpoint in the api docs
-            scroll_to_output: If True, will scroll to output component on completion
-            show_progress: If True, will show progress animation while pending
-            queue: If True, will place the request on the queue, if the queue exists
-            batch: If True, then the function should process a batch of inputs, meaning that it should accept a list of input values for each parameter. The lists should be of equal length (and be up to length `max_batch_size`). The function is then *required* to return a tuple of lists (even if there is only 1 output component), with each list in the tuple corresponding to one output component.
-            max_batch_size: Maximum number of inputs to batch together if this is called from the queue (only relevant if batch=True)
-            preprocess: If False, will not run preprocessing of component data before running 'fn' (e.g. leaving it as a base64 string if this method is called with the `Image` component).
-            postprocess: If False, will not run postprocessing of component data before returning 'fn' output to the browser.
-            cancels: A list of other events to cancel when this event is triggered. For example, setting cancels=[click_event] will cancel the click_event, where click_event is the return value of another components .click method.
-            every: Run this event 'every' number of seconds while the client connection is open. Interpreted in seconds. Queue must be enabled.
+        This listener is triggered when the user uploads a file into the component (e.g. when the user uploads a video into a video component).
         """
-        # _js: Optional frontend js method to run before running 'fn'. Input arguments for js method are values of 'inputs' and 'outputs', return should be a list of values for output components.
 
-        self.set_event_trigger(
-            "upload",
-            fn,
-            inputs,
-            outputs,
-            preprocess=preprocess,
-            postprocess=postprocess,
-            scroll_to_output=scroll_to_output,
-            show_progress=show_progress,
-            api_name=api_name,
-            js=_js,
-            queue=queue,
-            batch=batch,
-            max_batch_size=max_batch_size,
-            every=every,
+
+@document("*release", inherit=True)
+class Releaseable(EventListener):
+    def __init__(self):
+        self.release = EventListenerMethod(self, "release")
+        """
+        This listener is triggered when the user releases the mouse on this component (e.g. when the user releases the slider).
+        """
+
+
+@document("*select", inherit=True)
+class Selectable(EventListener):
+    def __init__(self):
+        self.selectable: bool = False
+        self.select = EventListenerMethod(
+            self, "select", callback=lambda: setattr(self, "selectable", True)
         )
-        set_cancel_events(self, "upload", cancels)
+        """
+        This listener is triggered when the user selects from within the Component.
+        This event has EventData of type gradio.SelectData that carries information, accessible through SelectData.index and SelectData.value.
+        See EventData documentation on how to use this event data.
+        """
+
+    def get_config(self):
+        config = super().get_config()
+        config["selectable"] = self.selectable
+        return config
+
+
+class SelectData(EventData):
+    def __init__(self, target: Block | None, data: Any):
+        super().__init__(target, data)
+        self.index: int | tuple[int, int] = data["index"]
+        """
+        The index of the selected item. Is a tuple if the component is two dimensional or selection is a range.
+        """
+        self.value: Any = data["value"]
+        """
+        The value of the selected item.
+        """
+        self.selected: bool = data.get("selected", True)
+        """
+        True if the item was selected, False if deselected.
+        """
+
+
+@document("*like", inherit=True)
+class Likeable(EventListener):
+    def __init__(self):
+        self.likeable: bool = False
+        self.like = EventListenerMethod(
+            self, "like", callback=lambda: setattr(self, "likeable", True)
+        )
+        """
+        This listener is triggered when the user likes/dislikes from within the Component.
+        This event has EventData of type gradio.LikeData that carries information, accessible through LikeData.index and LikeData.value.
+        See EventData documentation on how to use this event data.
+        """
+
+    def get_config(self):
+        config = super().get_config()
+        config["likeable"] = self.likeable
+        return config
+
+
+class LikeData(EventData):
+    def __init__(self, target: Block | None, data: Any):
+        super().__init__(target, data)
+        self.index: int | tuple[int, int] = data["index"]
+        """
+        The index of the liked/disliked item. Is a tuple if the component is two dimensional.
+        """
+        self.value: Any = data["value"]
+        """
+        The value of the liked/disliked item.
+        """
+        self.liked: bool = data.get("liked", True)
+        """
+        True if the item was liked, False if disliked.
+        """

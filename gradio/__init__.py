@@ -1,36 +1,47 @@
-import pkgutil
+import json
 
 import gradio.components as components
 import gradio.inputs as inputs
 import gradio.outputs as outputs
 import gradio.processing_utils
 import gradio.templates
+import gradio.themes as themes
 from gradio.blocks import Blocks
+from gradio.chat_interface import ChatInterface
 from gradio.components import (
     HTML,
     JSON,
+    AnnotatedImage,
+    Annotatedimage,
     Audio,
+    BarPlot,
     Button,
     Carousel,
     Chatbot,
     Checkbox,
-    Checkboxgroup,
     CheckboxGroup,
+    Checkboxgroup,
+    ClearButton,
+    Code,
     ColorPicker,
     DataFrame,
     Dataframe,
     Dataset,
     Dropdown,
+    DuplicateButton,
     File,
+    FileExplorer,
     Gallery,
     Highlight,
-    Highlightedtext,
     HighlightedText,
+    Highlightedtext,
     Image,
     Interpretation,
     Json,
     Label,
     LinePlot,
+    LoginButton,
+    LogoutButton,
     Markdown,
     Model3D,
     Number,
@@ -49,7 +60,10 @@ from gradio.components import (
     Video,
     component,
 )
+from gradio.deploy_space import deploy
+from gradio.events import LikeData, SelectData, on
 from gradio.exceptions import Error
+from gradio.external import load
 from gradio.flagging import (
     CSVLogger,
     FlaggingCallback,
@@ -57,13 +71,21 @@ from gradio.flagging import (
     HuggingFaceDatasetSaver,
     SimpleCSVLogger,
 )
-from gradio.helpers import Progress
-from gradio.helpers import create_examples as Examples
-from gradio.helpers import make_waveform, skip, update
+from gradio.helpers import (
+    EventData,
+    Info,
+    Progress,
+    Warning,
+    make_waveform,
+    skip,
+    update,
+)
+from gradio.helpers import create_examples as Examples  # noqa: N812
 from gradio.interface import Interface, TabbedInterface, close_all
 from gradio.ipython_ext import load_ipython_extension
 from gradio.layouts import Accordion, Box, Column, Group, Row, Tab, TabItem, Tabs
 from gradio.mix import Parallel, Series
+from gradio.oauth import OAuthProfile
 from gradio.routes import Request, mount_gradio_app
 from gradio.templates import (
     Files,
@@ -81,8 +103,7 @@ from gradio.templates import (
     TextArea,
     Webcam,
 )
+from gradio.themes import Base as Theme
+from gradio.utils import get_package_version
 
-current_pkg_version = (
-    (pkgutil.get_data(__name__, "version.txt") or b"").decode("ascii").strip()
-)
-__version__ = current_pkg_version
+__version__ = get_package_version()

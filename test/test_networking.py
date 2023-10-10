@@ -4,6 +4,7 @@ import os
 import urllib
 import warnings
 
+import pytest
 from fastapi.testclient import TestClient
 
 import gradio as gr
@@ -53,13 +54,16 @@ class TestInterfaceErrors:
 
 
 class TestStartServer:
-    def test_start_server(self):
+    # Test IPv4 and IPv6 hostnames as they would be passed from --server-name.
+    @pytest.mark.parametrize("host", ["127.0.0.1", "[::1]"])
+    def test_start_server(self, host):
         io = Interface(lambda x: x, "number", "number")
         io.favicon_path = None
         io.config = io.get_config_file()
         io.show_error = True
         io.flagging_callback.setup(gr.Number(), io.flagging_dir)
         io.auth = None
+        io.host = host
 
         port = networking.get_first_available_port(
             networking.INITIAL_PORT_VALUE,
@@ -77,3 +81,20 @@ class TestURLs:
     def test_url_ok(self):
         res = networking.url_ok("https://www.gradio.app")
         assert res
+
+
+def test_start_server_app_kwargs():
+    """
+    Test that start_server accepts app_kwargs and they're propagated to FastAPI.
+    """
+    io = Interface(lambda x: x, "number", "number")
+    app, _, _ = io.launch(
+        show_error=True,
+        prevent_thread_lock=True,
+        app_kwargs={
+            "docs_url": "/docs",
+        },
+    )
+    client = TestClient(app)
+    assert client.get("/docs").status_code == 200
+    io.close()

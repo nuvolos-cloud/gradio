@@ -5,7 +5,8 @@ source scripts/helpers.sh
 
 pnpm_required
 
+python scripts/generate_theme.py
+
 echo "Building the frontend..."
-cd ui
-pnpm i --frozen-lockfile
+pnpm i --frozen-lockfile --ignore-scripts
 pnpm build

@@ -1,41 +1,81 @@
 """This module should not be used directly as its API is subject to change. Instead,
-use the `gr.Blocks.load()` or `gr.Interface.load()` functions."""
+use the `gr.Blocks.load()` or `gr.load()` functions."""
 
 from __future__ import annotations
 
 import json
 import re
-import uuid
 import warnings
-from copy import deepcopy
-from typing import TYPE_CHECKING, Callable, Dict
+from typing import TYPE_CHECKING, Callable
 
 import requests
+from gradio_client import Client
+from gradio_client.documentation import document, set_documentation_group
 
 import gradio
 from gradio import components, utils
-from gradio.exceptions import TooManyRequestsError
+from gradio.context import Context
+from gradio.deprecation import warn_deprecation
+from gradio.exceptions import Error, ModelNotFoundError, TooManyRequestsError
 from gradio.external_utils import (
     cols_to_rows,
     encode_to_base64,
     get_tabular_examples,
-    get_ws_fn,
     postprocess_label,
     rows_to_cols,
     streamline_spaces_interface,
-    use_websocket,
 )
-from gradio.processing_utils import to_binary
+from gradio.processing_utils import extract_base64_data, to_binary
 
 if TYPE_CHECKING:
     from gradio.blocks import Blocks
     from gradio.interface import Interface
 
 
-def load_blocks_from_repo(
+set_documentation_group("helpers")
+
+
+@document()
+def load(
     name: str,
     src: str | None = None,
     api_key: str | None = None,
+    hf_token: str | None = None,
+    alias: str | None = None,
+    **kwargs,
+) -> Blocks:
+    """
+    Method that constructs a Blocks from a Hugging Face repo. Can accept
+    model repos (if src is "models") or Space repos (if src is "spaces"). The input
+    and output components are automatically loaded from the repo.
+    Parameters:
+        name: the name of the model (e.g. "gpt2" or "facebook/bart-base") or space (e.g. "flax-community/spanish-gpt2"), can include the `src` as prefix (e.g. "models/facebook/bart-base")
+        src: the source of the model: `models` or `spaces` (or leave empty if source is provided as a prefix in `name`)
+        api_key: Deprecated. Please use the `hf_token` parameter instead.
+        hf_token: optional access token for loading private Hugging Face Hub models or spaces. Find your token here: https://huggingface.co/settings/tokens.  Warning: only provide this if you are loading a trusted private Space as it can be read by the Space you are loading.
+        alias: optional string used as the name of the loaded model instead of the default name (only applies if loading a Space running Gradio 2.x)
+    Returns:
+        a Gradio Blocks object for the given model
+    Example:
+        import gradio as gr
+        demo = gr.load("gradio/question-answering", src="spaces")
+        demo.launch()
+    """
+    if hf_token is None and api_key:
+        warn_deprecation(
+            "The `api_key` parameter will be deprecated. "
+            "Please use the `hf_token` parameter going forward."
+        )
+        hf_token = api_key
+    return load_blocks_from_repo(
+        name=name, src=src, hf_token=hf_token, alias=alias, **kwargs
+    )
+
+
+def load_blocks_from_repo(
+    name: str,
+    src: str | None = None,
+    hf_token: str | None = None,
     alias: str | None = None,
     **kwargs,
 ) -> Blocks:
@@ -43,23 +83,30 @@ def load_blocks_from_repo(
     if src is None:
         # Separate the repo type (e.g. "model") from repo name (e.g. "google/vit-base-patch16-224")
         tokens = name.split("/")
-        assert (
-            len(tokens) > 1
-        ), "Either `src` parameter must be provided, or `name` must be formatted as {src}/{repo name}"
+        if len(tokens) <= 1:
+            raise ValueError(
+                "Either `src` parameter must be provided, or `name` must be formatted as {src}/{repo name}"
+            )
         src = tokens[0]
         name = "/".join(tokens[1:])
 
-    factory_methods: Dict[str, Callable] = {
+    factory_methods: dict[str, Callable] = {
         # for each repo type, we have a method that returns the Interface given the model name & optionally an api_key
         "huggingface": from_model,
         "models": from_model,
         "spaces": from_spaces,
     }
-    assert src.lower() in factory_methods, "parameter: src must be one of {}".format(
-        factory_methods.keys()
-    )
+    if src.lower() not in factory_methods:
+        raise ValueError(f"parameter: src must be one of {factory_methods.keys()}")
 
-    blocks: gradio.Blocks = factory_methods[src](name, api_key, alias, **kwargs)
+    if hf_token is not None:
+        if Context.hf_token is not None and Context.hf_token != hf_token:
+            warnings.warn(
+                """You are loading a model/Space with a different access token than the one you used to load a previous model/Space. This is not recommended, as it may cause unexpected behavior."""
+            )
+        Context.hf_token = hf_token
+
+    blocks: gradio.Blocks = factory_methods[src](name, hf_token, alias, **kwargs)
     return blocks
 
 
@@ -89,24 +136,27 @@ def chatbot_postprocess(response):
     return chatbot_value, response_json
 
 
-def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs):
-    model_url = "https://huggingface.co/{}".format(model_name)
-    api_url = "https://api-inference.huggingface.co/models/{}".format(model_name)
-    print("Fetching model from: {}".format(model_url))
+def from_model(model_name: str, hf_token: str | None, alias: str | None, **kwargs):
+    model_url = f"https://huggingface.co/{model_name}"
+    api_url = f"https://api-inference.huggingface.co/models/{model_name}"
+    print(f"Fetching model from: {model_url}")
 
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key is not None else {}
+    headers = {"Authorization": f"Bearer {hf_token}"} if hf_token is not None else {}
 
     # Checking if model exists, and if so, it gets the pipeline
     response = requests.request("GET", api_url, headers=headers)
-    assert (
-        response.status_code == 200
-    ), f"Could not find model: {model_name}. If it is a private or gated model, please provide your Hugging Face access token (https://huggingface.co/settings/tokens) as the argument for the `api_key` parameter."
+    if response.status_code != 200:
+        raise ModelNotFoundError(
+            f"Could not find model: {model_name}. If it is a private or gated model, please provide your Hugging Face access token (https://huggingface.co/settings/tokens) as the argument for the `api_key` parameter."
+        )
     p = response.json().get("pipeline_tag")
     pipelines = {
         "audio-classification": {
             # example model: ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition
-            "inputs": components.Audio(source="upload", type="filepath", label="Input"),
-            "outputs": components.Label(label="Class"),
+            "inputs": components.Audio(
+                source="upload", type="filepath", label="Input", render=False
+            ),
+            "outputs": components.Label(label="Class", render=False),
             "preprocess": lambda i: to_binary,
             "postprocess": lambda r: postprocess_label(
                 {i["label"].split(", ")[0]: i["score"] for i in r.json()}
@@ -114,34 +164,38 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
         },
         "audio-to-audio": {
             # example model: facebook/xm_transformer_sm_all-en
-            "inputs": components.Audio(source="upload", type="filepath", label="Input"),
-            "outputs": components.Audio(label="Output"),
+            "inputs": components.Audio(
+                source="upload", type="filepath", label="Input", render=False
+            ),
+            "outputs": components.Audio(label="Output", render=False),
             "preprocess": to_binary,
             "postprocess": encode_to_base64,
         },
         "automatic-speech-recognition": {
             # example model: facebook/wav2vec2-base-960h
-            "inputs": components.Audio(source="upload", type="filepath", label="Input"),
-            "outputs": components.Textbox(label="Output"),
+            "inputs": components.Audio(
+                source="upload", type="filepath", label="Input", render=False
+            ),
+            "outputs": components.Textbox(label="Output", render=False),
             "preprocess": to_binary,
             "postprocess": lambda r: r.json()["text"],
         },
         "conversational": {
-            "inputs": [components.Textbox(), components.State()],  # type: ignore
-            "outputs": [components.Chatbot(), components.State()],  # type: ignore
+            "inputs": [components.Textbox(render=False), components.State(render=False)],  # type: ignore
+            "outputs": [components.Chatbot(render=False), components.State(render=False)],  # type: ignore
             "preprocess": chatbot_preprocess,
             "postprocess": chatbot_postprocess,
         },
         "feature-extraction": {
             # example model: julien-c/distilbert-feature-extraction
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Dataframe(label="Output"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Dataframe(label="Output", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": lambda r: r.json()[0],
         },
         "fill-mask": {
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Label(label="Classification"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Label(label="Classification", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": lambda r: postprocess_label(
                 {i["token_str"]: i["score"] for i in r.json()}
@@ -149,43 +203,39 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
         },
         "image-classification": {
             # Example: google/vit-base-patch16-224
-            "inputs": components.Image(type="filepath", label="Input Image"),
-            "outputs": components.Label(label="Classification"),
+            "inputs": components.Image(
+                type="filepath", label="Input Image", render=False
+            ),
+            "outputs": components.Label(label="Classification", render=False),
             "preprocess": to_binary,
             "postprocess": lambda r: postprocess_label(
                 {i["label"].split(", ")[0]: i["score"] for i in r.json()}
             ),
         },
-        "image-to-text": {
-            "inputs": components.Image(type="filepath", label="Input Image"),
-            "outputs": components.Textbox(),
-            "preprocess": to_binary,
-            "postprocess": lambda r: r.json()[0]["generated_text"],
-        },
         "question-answering": {
             # Example: deepset/xlm-roberta-base-squad2
             "inputs": [
-                components.Textbox(lines=7, label="Context"),
-                components.Textbox(label="Question"),
+                components.Textbox(lines=7, label="Context", render=False),
+                components.Textbox(label="Question", render=False),
             ],
             "outputs": [
-                components.Textbox(label="Answer"),
-                components.Label(label="Score"),
+                components.Textbox(label="Answer", render=False),
+                components.Label(label="Score", render=False),
             ],
             "preprocess": lambda c, q: {"inputs": {"context": c, "question": q}},
             "postprocess": lambda r: (r.json()["answer"], {"label": r.json()["score"]}),
         },
         "summarization": {
             # Example: facebook/bart-large-cnn
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Textbox(label="Summary"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Textbox(label="Summary", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": lambda r: r.json()[0]["summary_text"],
         },
         "text-classification": {
             # Example: distilbert-base-uncased-finetuned-sst-2-english
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Label(label="Classification"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Label(label="Classification", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": lambda r: postprocess_label(
                 {i["label"].split(", ")[0]: i["score"] for i in r.json()[0]}
@@ -193,32 +243,34 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
         },
         "text-generation": {
             # Example: gpt2
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Textbox(label="Output"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Textbox(label="Output", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": lambda r: r.json()[0]["generated_text"],
         },
         "text2text-generation": {
             # Example: valhalla/t5-small-qa-qg-hl
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Textbox(label="Generated Text"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Textbox(label="Generated Text", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": lambda r: r.json()[0]["generated_text"],
         },
         "translation": {
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Textbox(label="Translation"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Textbox(label="Translation", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": lambda r: r.json()[0]["translation_text"],
         },
         "zero-shot-classification": {
             # Example: facebook/bart-large-mnli
             "inputs": [
-                components.Textbox(label="Input"),
-                components.Textbox(label="Possible class names (" "comma-separated)"),
-                components.Checkbox(label="Allow multiple true classes"),
+                components.Textbox(label="Input", render=False),
+                components.Textbox(
+                    label="Possible class names (" "comma-separated)", render=False
+                ),
+                components.Checkbox(label="Allow multiple true classes", render=False),
             ],
-            "outputs": components.Label(label="Classification"),
+            "outputs": components.Label(label="Classification", render=False),
             "preprocess": lambda i, c, m: {
                 "inputs": i,
                 "parameters": {"candidate_labels": c, "multi_class": m},
@@ -234,15 +286,18 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
             # Example: sentence-transformers/distilbert-base-nli-stsb-mean-tokens
             "inputs": [
                 components.Textbox(
-                    value="That is a happy person", label="Source Sentence"
+                    value="That is a happy person",
+                    label="Source Sentence",
+                    render=False,
                 ),
                 components.Textbox(
                     lines=7,
                     placeholder="Separate each sentence by a newline",
                     label="Sentences to compare to",
+                    render=False,
                 ),
             ],
-            "outputs": components.Label(label="Classification"),
+            "outputs": components.Label(label="Classification", render=False),
             "preprocess": lambda src, sentences: {
                 "inputs": {
                     "source_sentence": src,
@@ -255,24 +310,67 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
         },
         "text-to-speech": {
             # Example: julien-c/ljspeech_tts_train_tacotron2_raw_phn_tacotron_g2p_en_no_space_train
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Audio(label="Audio"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Audio(label="Audio", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": encode_to_base64,
         },
         "text-to-image": {
             # example model: osanseviero/BigGAN-deep-128
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.Image(label="Output"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.Image(label="Output", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": encode_to_base64,
         },
         "token-classification": {
             # example model: huggingface-course/bert-finetuned-ner
-            "inputs": components.Textbox(label="Input"),
-            "outputs": components.HighlightedText(label="Output"),
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.HighlightedText(label="Output", render=False),
             "preprocess": lambda x: {"inputs": x},
             "postprocess": lambda r: r,  # Handled as a special case in query_huggingface_api()
+        },
+        "document-question-answering": {
+            # example model: impira/layoutlm-document-qa
+            "inputs": [
+                components.Image(type="filepath", label="Input Document", render=False),
+                components.Textbox(label="Question", render=False),
+            ],
+            "outputs": components.Label(label="Label", render=False),
+            "preprocess": lambda img, q: {
+                "inputs": {
+                    "image": extract_base64_data(img),  # Extract base64 data
+                    "question": q,
+                }
+            },
+            "postprocess": lambda r: postprocess_label(
+                {i["answer"]: i["score"] for i in r.json()}
+            ),
+        },
+        "visual-question-answering": {
+            # example model: dandelin/vilt-b32-finetuned-vqa
+            "inputs": [
+                components.Image(type="filepath", label="Input Image", render=False),
+                components.Textbox(label="Question", render=False),
+            ],
+            "outputs": components.Label(label="Label", render=False),
+            "preprocess": lambda img, q: {
+                "inputs": {
+                    "image": extract_base64_data(img),
+                    "question": q,
+                }
+            },
+            "postprocess": lambda r: postprocess_label(
+                {i["answer"]: i["score"] for i in r.json()}
+            ),
+        },
+        "image-to-text": {
+            # example model: Salesforce/blip-image-captioning-base
+            "inputs": components.Image(
+                type="filepath", label="Input Image", render=False
+            ),
+            "outputs": components.Textbox(label="Generated Text", render=False),
+            "preprocess": to_binary,
+            "postprocess": lambda r: r.json()[0]["generated_text"],
         },
     }
 
@@ -287,9 +385,10 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
                 type="pandas",
                 headers=col_names,
                 col_count=(len(col_names), "fixed"),
+                render=False,
             ),
             "outputs": components.Dataframe(
-                label="Predictions", type="array", headers=["prediction"]
+                label="Predictions", type="array", headers=["prediction"], render=False
             ),
             "preprocess": rows_to_cols,
             "postprocess": lambda r: {
@@ -299,8 +398,8 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
             "examples": example_data,
         }
 
-    if p is None or not (p in pipelines):
-        raise ValueError("Unsupported pipeline type: {}".format(p))
+    if p is None or p not in pipelines:
+        raise ValueError(f"Unsupported pipeline type: {p}")
 
     pipeline = pipelines[p]
 
@@ -313,14 +412,14 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
             data.update({"options": {"wait_for_model": True}})
             data = json.dumps(data)
         response = requests.request("POST", api_url, headers=headers, data=data)
-        if not (response.status_code == 200):
+        if response.status_code != 200:
             errors_json = response.json()
             errors, warns = "", ""
             if errors_json.get("error"):
                 errors = f", Error: {errors_json.get('error')}"
             if errors_json.get("warnings"):
                 warns = f", Warnings: {errors_json.get('warnings')}"
-            raise ValueError(
+            raise Error(
                 f"Could not complete request to HuggingFace API, Status Code: {response.status_code}"
                 + errors
                 + warns
@@ -359,15 +458,15 @@ def from_model(model_name: str, api_key: str | None, alias: str | None, **kwargs
 
 
 def from_spaces(
-    space_name: str, api_key: str | None, alias: str | None, **kwargs
+    space_name: str, hf_token: str | None, alias: str | None, **kwargs
 ) -> Blocks:
-    space_url = "https://huggingface.co/spaces/{}".format(space_name)
+    space_url = f"https://huggingface.co/spaces/{space_name}"
 
-    print("Fetching Space from: {}".format(space_url))
+    print(f"Fetching Space from: {space_url}")
 
     headers = {}
-    if api_key is not None:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if hf_token is not None:
+        headers["Authorization"] = f"Bearer {hf_token}"
 
     iframe_url = (
         requests.get(
@@ -389,11 +488,11 @@ def from_spaces(
     )  # some basic regex to extract the config
     try:
         config = json.loads(result.group(1))  # type: ignore
-    except AttributeError:
-        raise ValueError("Could not load the Space: {}".format(space_name))
+    except AttributeError as ae:
+        raise ValueError(f"Could not load the Space: {space_name}") from ae
     if "allow_flagging" in config:  # Create an Interface for Gradio 2.x Spaces
         return from_spaces_interface(
-            space_name, config, alias, api_key, iframe_url, **kwargs
+            space_name, config, alias, hf_token, iframe_url, **kwargs
         )
     else:  # Create a Blocks for Gradio 3.x Spaces
         if kwargs:
@@ -403,88 +502,42 @@ def from_spaces(
                 "Blocks or Interface locally. You may find this Guide helpful: "
                 "https://gradio.app/using_blocks_like_functions/"
             )
-        return from_spaces_blocks(config, api_key, iframe_url)
+        return from_spaces_blocks(space=space_name, hf_token=hf_token)
 
 
-def from_spaces_blocks(config: Dict, api_key: str | None, iframe_url: str) -> Blocks:
-    api_url = "{}/api/predict/".format(iframe_url)
-
-    headers = {"Content-Type": "application/json"}
-    if api_key is not None:
-        headers["Authorization"] = f"Bearer {api_key}"
-    ws_url = "{}/queue/join".format(iframe_url).replace("https", "wss")
-
-    ws_fn = get_ws_fn(ws_url, headers)
-
-    fns = []
-    for d, dependency in enumerate(config["dependencies"]):
-        if dependency["backend_fn"]:
-
-            def get_fn(outputs, fn_index, use_ws):
-                def fn(*data):
-                    data = json.dumps({"data": data, "fn_index": fn_index})
-                    hash_data = json.dumps(
-                        {"fn_index": fn_index, "session_hash": str(uuid.uuid4())}
-                    )
-                    if use_ws:
-                        result = utils.synchronize_async(ws_fn, data, hash_data)
-                        output = result["data"]
-                    else:
-                        response = requests.post(api_url, headers=headers, data=data)
-                        result = json.loads(response.content.decode("utf-8"))
-                        try:
-                            output = result["data"]
-                        except KeyError:
-                            if "error" in result and "429" in result["error"]:
-                                raise TooManyRequestsError(
-                                    "Too many requests to the Hugging Face API"
-                                )
-                            raise KeyError(
-                                f"Could not find 'data' key in response from external Space. Response received: {result}"
-                            )
-                    if len(outputs) == 1:
-                        output = output[0]
-                    return output
-
-                return fn
-
-            fn = get_fn(
-                deepcopy(dependency["outputs"]), d, use_websocket(config, dependency)
-            )
-            fns.append(fn)
-        else:
-            fns.append(None)
-    return gradio.Blocks.from_config(config, fns, iframe_url)
+def from_spaces_blocks(space: str, hf_token: str | None) -> Blocks:
+    client = Client(space, hf_token=hf_token)
+    predict_fns = [endpoint._predict_resolve for endpoint in client.endpoints]
+    return gradio.Blocks.from_config(client.config, predict_fns, client.src)
 
 
 def from_spaces_interface(
     model_name: str,
-    config: Dict,
+    config: dict,
     alias: str | None,
-    api_key: str | None,
+    hf_token: str | None,
     iframe_url: str,
     **kwargs,
 ) -> Interface:
-
     config = streamline_spaces_interface(config)
-    api_url = "{}/api/predict/".format(iframe_url)
+    api_url = f"{iframe_url}/api/predict/"
     headers = {"Content-Type": "application/json"}
-    if api_key is not None:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if hf_token is not None:
+        headers["Authorization"] = f"Bearer {hf_token}"
 
     # The function should call the API with preprocessed data
     def fn(*data):
         data = json.dumps({"data": data})
         response = requests.post(api_url, headers=headers, data=data)
         result = json.loads(response.content.decode("utf-8"))
+        if "error" in result and "429" in result["error"]:
+            raise TooManyRequestsError("Too many requests to the Hugging Face API")
         try:
             output = result["data"]
-        except KeyError:
-            if "error" in result and "429" in result["error"]:
-                raise TooManyRequestsError("Too many requests to the Hugging Face API")
+        except KeyError as ke:
             raise KeyError(
                 f"Could not find 'data' key in response from external Space. Response received: {result}"
-            )
+            ) from ke
         if (
             len(config["outputs"]) == 1
         ):  # if the fn is supposed to return a single value, pop it

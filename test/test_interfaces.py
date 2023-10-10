@@ -5,19 +5,16 @@ from contextlib import contextmanager
 from functools import partial
 from string import capwords
 
-import mlflow
 import pytest
 import requests
-import wandb
 from fastapi.testclient import TestClient
 
 import gradio
-from gradio.blocks import Blocks
+from gradio.blocks import Blocks, get_api_info
+from gradio.components import Image, Textbox
 from gradio.interface import Interface, TabbedInterface, close_all, os
 from gradio.layouts import TabItem, Tabs
 from gradio.utils import assert_configs_are_equivalent_besides_ids
-
-os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
 
 @contextmanager
@@ -53,11 +50,36 @@ class TestInterface:
 
     def test_partial_functions(self):
         def greet(name, formatter):
-            return formatter("Hello " + name + "!")
+            return formatter(f"Hello {name}!")
 
         greet_upper_case = partial(greet, formatter=capwords)
         demo = Interface(fn=greet_upper_case, inputs="text", outputs="text")
         assert demo("abubakar") == "Hello Abubakar!"
+
+    def test_input_labels_extracted_from_method(self):
+        class A:
+            def test(self, parameter_name):
+                return parameter_name
+
+        t = Textbox()
+        Interface(A().test, t, "text")
+        assert t.label == "parameter_name"
+
+        def test(parameter_name1, parameter_name2):
+            return parameter_name1
+
+        t = Textbox()
+        i = Image()
+        Interface(test, [t, i], "text")
+        assert t.label == "parameter_name1"
+        assert i.label == "parameter_name2"
+
+        def special_args_test(req: gradio.Request, parameter_name):
+            return parameter_name
+
+        t = Textbox()
+        Interface(special_args_test, t, "text")
+        assert t.label == "parameter_name"
 
     def test_examples_valid_path(self):
         path = os.path.join(
@@ -65,7 +87,7 @@ class TestInterface:
         )
         interface = Interface(lambda x: 3 * x, "number", "number", examples=path)
         dataset_check = any(
-            [c["type"] == "dataset" for c in interface.get_config_file()["components"]]
+            c["type"] == "dataset" for c in interface.get_config_file()["components"]
         )
         assert dataset_check
 
@@ -78,16 +100,8 @@ class TestInterface:
                 interface.launch(prevent_thread_lock=False)
                 output = out.getvalue().strip()
                 assert (
-                    output == "Keyboard interruption in main thread... closing server."
+                    "Keyboard interruption in main thread... closing server." in output
                 )
-
-    @mock.patch("gradio.utils.colab_check")
-    def test_launch_colab_share(self, mock_colab_check):
-        mock_colab_check.return_value = True
-        interface = Interface(lambda x: x, "textbox", "label")
-        _, _, share_url = interface.launch(prevent_thread_lock=True)
-        assert share_url is None
-        interface.close()
 
     @mock.patch("gradio.utils.colab_check")
     @mock.patch("gradio.networking.setup_tunnel")
@@ -100,7 +114,9 @@ class TestInterface:
         interface.close()
 
     def test_interface_representation(self):
-        prediction_fn = lambda x: x
+        def prediction_fn(x):
+            return x
+
         prediction_fn.__name__ = "prediction_fn"
         repr = str(Interface(prediction_fn, "textbox", "label")).split("\n")
         assert prediction_fn.__name__ in repr[0]
@@ -141,62 +157,29 @@ class TestInterface:
         assert mock_display.call_count == 2
         interface.close()
 
-    @mock.patch("comet_ml.Experiment")
-    def test_integration_comet(self, mock_experiment):
-        experiment = mock_experiment()
-        experiment.log_text = mock.MagicMock()
-        experiment.log_other = mock.MagicMock()
-        interface = Interface(lambda x: x, "textbox", "label")
-        interface.launch(prevent_thread_lock=True)
-        interface.integrate(comet_ml=experiment)
-        experiment.log_text.assert_called_with("gradio: " + interface.local_url)
-        interface.share_url = "tmp"  # used to avoid creating real share links.
-        interface.integrate(comet_ml=experiment)
-        experiment.log_text.assert_called_with("gradio: " + interface.share_url)
-        assert experiment.log_other.call_count == 2
-        interface.share_url = None
-        interface.close()
+    def test_setting_interactive_false(self):
+        output_textbox = Textbox()
+        Interface(lambda x: x, "textbox", output_textbox)
+        assert not output_textbox.get_config()["interactive"]
+        output_textbox = Textbox(interactive=True)
+        Interface(lambda x: x, "textbox", output_textbox)
+        assert output_textbox.get_config()["interactive"]
 
-    def test_integration_mlflow(self):
-        mlflow.log_param = mock.MagicMock()
-        interface = Interface(lambda x: x, "textbox", "label")
-        interface.launch(prevent_thread_lock=True)
-        interface.integrate(mlflow=mlflow)
-        mlflow.log_param.assert_called_with(
-            "Gradio Interface Local Link", interface.local_url
+    def test_get_api_info(self):
+        io = Interface(lambda x: x, Image(type="filepath"), "textbox")
+        api_info = get_api_info(io.get_config_file())
+        assert len(api_info["named_endpoints"]) == 1
+        assert len(api_info["unnamed_endpoints"]) == 0
+
+    def test_api_name(self):
+        io = Interface(lambda x: x, "textbox", "textbox", api_name="echo")
+        assert next(
+            (d for d in io.config["dependencies"] if d["api_name"] == "echo"), None
         )
-        interface.share_url = "tmp"  # used to avoid creating real share links.
-        interface.integrate(mlflow=mlflow)
-        mlflow.log_param.assert_called_with(
-            "Gradio Interface Share Link", interface.share_url
-        )
-        interface.share_url = None
-        interface.close()
 
-    def test_integration_wandb(self):
-        with captured_output() as (out, err):
-            wandb.log = mock.MagicMock()
-            wandb.Html = mock.MagicMock()
-            interface = Interface(lambda x: x, "textbox", "label")
-            interface.width = 500
-            interface.height = 500
-            interface.integrate(wandb=wandb)
-
-            assert (
-                out.getvalue().strip()
-                == "The WandB integration requires you to `launch(share=True)` first."
-            )
-            interface.share_url = "tmp"
-            interface.integrate(wandb=wandb)
-            wandb.log.assert_called_once()
-
-    @mock.patch("requests.post")
-    def test_integration_analytics(self, mock_post):
-        mlflow.log_param = mock.MagicMock()
-        interface = Interface(lambda x: x, "textbox", "label")
-        interface.analytics_enabled = True
-        interface.integrate(mlflow=mlflow)
-        mock_post.assert_called_once()
+    def test_interface_in_blocks_does_not_error(self):
+        with Blocks():
+            Interface(fn=lambda x: x, inputs=Textbox(), outputs=Image())
 
 
 class TestTabbedInterface:
@@ -247,7 +230,7 @@ class TestInterfaceInterpretation:
         interpretation_dep = next(
             d
             for d in iface.config["dependencies"]
-            if d["targets"] == [interpretation_id]
+            if d["targets"][0][0] == interpretation_id
         )
         interpretation_comps = [
             c["id"]
@@ -277,7 +260,7 @@ class TestInterfaceInterpretation:
         fn_index = next(
             i
             for i, d in enumerate(iface.config["dependencies"])
-            if d["targets"] == [btn]
+            if d["targets"][0][0] == btn
         )
 
         response = client.post(

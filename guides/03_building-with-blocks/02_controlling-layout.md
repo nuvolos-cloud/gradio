@@ -13,7 +13,7 @@ with gr.Blocks() as demo:
         btn2 = gr.Button("Button 2")
 ```
 
-To make every element in a Row have the same height, use the `equal_height` argument.
+To make every element in a Row have the same height, use the `equal_height` argument of the `style` method.
 
 ```python
 with gr.Blocks() as demo:
@@ -22,40 +22,61 @@ with gr.Blocks() as demo:
         btn2 = gr.Button("Button 2")
 ```
 
-Learn more about Rows in the [docs](https://gradio.app/docs/#row). 
+The widths of elements in a Row can be controlled via a combination of `scale` and `min_width` arguments that are present in every Component.
+
+- `scale` is an integer that defines how an element will take up space in a Row. If scale is set to `0`, and element will not expand to take up space. If scale is set to `1` or greater, the element well expand. Multiple elements in a row will expand proportional to their scale. Below, `btn1` will expand twice as much as `btn2`, while `btn0` will not expand at all:
+
+```python
+with gr.Blocks() as demo:
+    with gr.Row():
+        btn0 = gr.Button("Button 0", scale=0)
+        btn1 = gr.Button("Button 1", scale=1)
+        btn2 = gr.Button("Button 2", scale=2)
+```
+
+- `min_width` will set the minimum width the element will take. The Row will wrap if there isn't sufficient space to satisfy all `min_width` values.
+
+Learn more about Rows in the [docs](https://gradio.app/docs/#row).
 
 ## Columns and Nesting
 
-Components within a Column will be placed vertically atop each other. Since the vertical layout is the default layout for Blocks apps anyway, to be useful, Columns are usually  nested within Rows. For example:
+Components within a Column will be placed vertically atop each other. Since the vertical layout is the default layout for Blocks apps anyway, to be useful, Columns are usually nested within Rows. For example:
 
 $code_rows_and_columns
 $demo_rows_and_columns
 
-See how the first column has two Textboxes arranged vertically. The second column has an Image and Button arranged vertically. Notice how the relative widths of the two columns is set by the `scale` parameter. The column with twice the `scale` value takes up twice the width. 
+See how the first column has two Textboxes arranged vertically. The second column has an Image and Button arranged vertically. Notice how the relative widths of the two columns is set by the `scale` parameter. The column with twice the `scale` value takes up twice the width.
 
-Columns have a `min_width` parameter as well (320 pixels by default). This prevents adjacent columns from becoming too narrow on mobile screens.
-
-Learn more about Columns in the [docs](https://gradio.app/docs/#column). 
+Learn more about Columns in the [docs](https://gradio.app/docs/#column).
 
 ## Tabs and Accordions
 
-You can also create Tabs using the `with gradio.Tab('tab_name'):` clause. Any component created inside of a `with gradio.Tab('tab_name'):` context appears in that tab. Consecutive Tab clauses are grouped together so that a single tab can be selected at one time, and only the components within that Tab's context are shown.
+You can also create Tabs using the `with gr.Tab('tab_name'):` clause. Any component created inside of a `with gr.Tab('tab_name'):` context appears in that tab. Consecutive Tab clauses are grouped together so that a single tab can be selected at one time, and only the components within that Tab's context are shown.
 
 For example:
 
 $code_blocks_flipper
 $demo_blocks_flipper
 
-Also note the `gradio.Accordion('label')` in this example. The Accordion is a layout that can be toggled open or closed. Like `Tabs`, it is a layout element that can selectively hide or show content. Any components that are defined inside of a `with gradio.Accordion('label'):` will be hidden or shown when the accordion's toggle icon is clicked.
+Also note the `gr.Accordion('label')` in this example. The Accordion is a layout that can be toggled open or closed. Like `Tabs`, it is a layout element that can selectively hide or show content. Any components that are defined inside of a `with gr.Accordion('label'):` will be hidden or shown when the accordion's toggle icon is clicked.
 
 Learn more about [Tabs](https://gradio.app/docs/#tab) and [Accordions](https://gradio.app/docs/#accordion) in the docs.
 
 ## Visibility
 
-Both Components and Layout elements have a `visible` argument that can set initially and also updated using `gr.update()`. Setting `gr.update(visible=...)` on a Column can be used to show or hide a set of Components.
+Both Components and Layout elements have a `visible` argument that can set initially and also updated. Setting `gr.Column(visible=...)` on a Column can be used to show or hide a set of Components.
 
 $code_blocks_form
 $demo_blocks_form
+
+## Variable Number of Outputs
+
+By adjusting the visibility of components in a dynamic way, it is possible to create
+demos with Gradio that support a _variable numbers of outputs_. Here's a very simple example
+where the number of output textboxes is controlled by an input slider:
+
+$code_variable_outputs
+$demo_variable_outputs
 
 ## Defining and Rendering Components Separately
 
@@ -72,4 +93,3 @@ with gr.Blocks() as demo:
     gr.Examples(["hello", "bonjour", "merhaba"], input_textbox)
     input_textbox.render()
 ```
-

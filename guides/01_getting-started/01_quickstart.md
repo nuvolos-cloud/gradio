@@ -1,10 +1,10 @@
 # Quickstart
 
-**Prerequisite**: Gradio requires Python 3.7 or higher, that's all!
+**Prerequisite**: Gradio requires Python 3.8 or higher, that's all!
 
 ## What Does Gradio Do?
 
-One of the *best ways to share* your machine learning model, API, or data science workflow with others is to create an **interactive app** that allows your users or colleagues to try out the demo in their browsers.
+One of the _best ways to share_ your machine learning model, API, or data science workflow with others is to create an **interactive app** that allows your users or colleagues to try out the demo in their browsers.
 
 Gradio allows you to **build demos and share them, all in Python.** And usually in just a few lines of code! So let's get started.
 
@@ -22,13 +22,23 @@ pip install gradio
 
 $code_hello_world
 
+We shorten the imported name to `gr` for better readability of code using Gradio. This is a widely adopted convention that you should follow so that anyone working with your code can easily understand it.
+
 3\. The demo below will appear automatically within the Jupyter Notebook, or pop in a browser on [http://localhost:7860](http://localhost:7860) if running from a script:
 
 $demo_hello_world
 
+When developing locally, if you want to run the code as a Python script, you can use the Gradio CLI to launch the application **in reload mode**, which will provide seamless and fast development. Learn more about reloading in the [Auto-Reloading Guide](https://gradio.app/developing-faster-with-reload-mode/).
+
+```bash
+gradio app.py
+```
+
+Note: you can also do `python app.py`, but it won't provide the automatic reload mechanism.
+
 ## The `Interface` Class
 
-You'll notice that in order to make the demo, we created a `gradio.Interface`. This `Interface` class can wrap any Python function with a user interface. In the example above, we saw a simple text-based function, but the function could be anything from music generator to a tax calculator to the prediction function of a pretrained machine learning model.
+You'll notice that in order to make the demo, we created a `gr.Interface`. This `Interface` class can wrap any Python function with a user interface. In the example above, we saw a simple text-based function, but the function could be anything from music generator to a tax calculator to the prediction function of a pretrained machine learning model.
 
 The core `Interface` class is initialized with three required parameters:
 
@@ -63,7 +73,7 @@ Gradio supports many types of components, such as `Image`, `DataFrame`, `Video`,
 $code_sepia_filter
 $demo_sepia_filter
 
-When using the `Image` component as input, your function will receive a NumPy array with the shape `(width, height, 3)`, where the last dimension represents the RGB values. We'll return an image as well in the form of a NumPy array.
+When using the `Image` component as input, your function will receive a NumPy array with the shape `(height, width, 3)`, where the last dimension represents the RGB values. We'll return an image as well in the form of a NumPy array.
 
 You can also set the datatype used by the component with the `type=` keyword argument. For example, if you wanted your function to take a file path to an image instead of a NumPy array, the input `Image` component could be written as:
 
@@ -75,11 +85,29 @@ Also note that our input `Image` component comes with an edit button 🖉, which
 
 You can read more about the many components and how to use them in the [Gradio docs](https://gradio.app/docs).
 
+## Chatbots
+
+Gradio includes a high-level class, `gr.ChatInterface`, which is similar to `gr.Interface`, but is specifically designed for chatbot UIs. The `gr.ChatInterface` class also wraps a function but this function must have a specific signature. The function should take two arguments: `message` and then `history` (the arguments can be named anything, but must be in this order)
+
+- `message`: a `str` representing the user's input
+- `history`: a `list` of `list` representing the conversations up until that point. Each inner list consists of two `str` representing a pair: `[user input, bot response]`.
+
+Your function should return a single string response, which is the bot's response to the particular user input `message`.
+
+Other than that, `gr.ChatInterface` has no required parameters (though several are available for customization of the UI).
+
+Here's a toy example:
+
+$code_chatinterface_random_response
+$demo_chatinterface_random_response
+
+You can [read more about `gr.ChatInterface` here](https://gradio.app/guides/creating-a-chatbot-fast).
+
 ## Blocks: More Flexibility and Control
 
-Gradio offers two classes to build apps:
+Gradio offers two approaches to build apps:
 
-1\. **Interface**, that provides a high-level abstraction for creating demos that we've been discussing so far.
+1\. **Interface** and **ChatInterface**, which provide a high-level abstraction for creating demos that we've been discussing so far.
 
 2\. **Blocks**, a low-level API for designing web apps with more flexible layouts and data flows. Blocks allows you to do things like feature multiple data flows and demos, control where components appear on the page, handle complex data flows (e.g. outputs can serve as inputs to other functions), and update properties/visibility of components based on user interaction — still all in Python. If this customizability is what you need, try `Blocks` instead!
 
@@ -103,6 +131,6 @@ Here's an app to give you a taste of what's possible with `Blocks`:
 $code_blocks_flipper
 $demo_blocks_flipper
 
-A lot more going on here! We'll cover how to create complex `Blocks` apps like this in the [building with blocks](https://github.com/gradio-app/gradio/tree/main/guides/3\)building_with_blocks) section for you.
+A lot more going on here! We'll cover how to create complex `Blocks` apps like this in the [building with blocks](https://gradio.app/blocks-and-event-listeners) section for you.
 
 Congrats, you're now familiar with the basics of Gradio! 🥳 Go to our [next guide](https://gradio.app/key_features) to learn more about the key features of Gradio.

@@ -1,8 +1,8 @@
-import shutil
+import argparse
 import os
 import pathlib
+import shutil
 import textwrap
-import argparse
 
 
 def copy_all_demos(source_dir: str, dest_dir: str):
@@ -10,6 +10,7 @@ def copy_all_demos(source_dir: str, dest_dir: str):
         "audio_debugger",
         "altair_plot",
         "blocks_essay",
+        "blocks_group",
         "blocks_js_methods",
         "blocks_layout",
         "blocks_mask",
@@ -17,10 +18,15 @@ def copy_all_demos(source_dir: str, dest_dir: str):
         "blocks_update",
         "calculator",
         "cancel_events",
+        "chatbot_multimodal",
+        "chatinterface_streaming_echo",
+        "clear_components",
+        "code",
         "fake_gan",
         "fake_diffusion_with_gif",
         "gender_sentence_default_interpretation",
         "image_mod_default_image",
+        "image_segmentation",
         "interface_parallel_load",
         "interface_random_slider",
         "interface_series_load",
@@ -29,11 +35,11 @@ def copy_all_demos(source_dir: str, dest_dir: str):
         "matrix_transpose",
         "model3D",
         "native_plots",
-        "reset_components",
         "reverse_audio",
         "stt_or_tts",
         "stream_audio",
         "stream_frames",
+        "video_component",
         "zip_files",
     ]
     for demo in demos_to_copy:
@@ -49,6 +55,7 @@ if __name__ == "__main__":
         description="Copy all demos to all_demos and update requirements"
     )
     parser.add_argument("gradio_version", type=str, help="Gradio")
+    parser.add_argument("gradio_client_version", type=str, help="Gradio Client Version")
     args = parser.parse_args()
 
     source_dir = pathlib.Path(pathlib.Path(__file__).parent, "..", "demo")
@@ -60,6 +67,7 @@ if __name__ == "__main__":
         pathlib.Path(__file__).parent, "..", "demo", "all_demos", "requirements.txt"
     )
     requirements = f"""
+    {args.gradio_client_version}
     {args.gradio_version}
     pypistats==1.1.0
     plotly==5.10.0

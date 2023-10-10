@@ -4,13 +4,15 @@ from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
+from typing_extensions import Literal
 
 
 class PredictBody(BaseModel):
-    session_hash: Optional[str]
-    event_id: Optional[str]
+    session_hash: Optional[str] = None
+    event_id: Optional[str] = None
     data: List[Any]
-    fn_index: Optional[int]
+    event_data: Optional[Any] = None
+    fn_index: Optional[int] = None
     batched: Optional[
         bool
     ] = False  # Whether the data is a batch of samples (i.e. called from the queue if batch=True) or a single sample (i.e. called from the UI)
@@ -24,6 +26,13 @@ class ResetBody(BaseModel):
     fn_index: int
 
 
+class ComponentServerBody(BaseModel):
+    session_hash: str
+    component_id: int
+    fn_name: str
+    data: Any
+
+
 class InterfaceTypes(Enum):
     STANDARD = auto()
     INPUT_ONLY = auto()
@@ -35,20 +44,26 @@ class Estimation(BaseModel):
     msg: Optional[str] = "estimation"
     rank: Optional[int] = None
     queue_size: int
-    avg_event_process_time: Optional[float]
-    avg_event_concurrent_process_time: Optional[float]
+    avg_event_process_time: Optional[float] = None
+    avg_event_concurrent_process_time: Optional[float] = None
     rank_eta: Optional[float] = None
     queue_eta: float
 
 
 class ProgressUnit(BaseModel):
-    index: Optional[int]
-    length: Optional[int]
-    unit: Optional[str]
-    progress: Optional[float]
-    desc: Optional[str]
+    index: Optional[int] = None
+    length: Optional[int] = None
+    unit: Optional[str] = None
+    progress: Optional[float] = None
+    desc: Optional[str] = None
 
 
 class Progress(BaseModel):
     msg: str = "progress"
     progress_data: List[ProgressUnit] = []
+
+
+class LogMessage(BaseModel):
+    msg: str = "log"
+    log: str
+    level: Literal["info", "warning"]

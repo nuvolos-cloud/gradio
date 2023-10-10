@@ -1,5 +1,4 @@
 import gradio as gr
-import pandas as pd
 import plotly.graph_objects as go
 from datasets import load_dataset
 
@@ -48,7 +47,7 @@ with gr.Blocks() as demo:
             max_price = gr.Number(value=1000, label="Maximum Price")
         boroughs = gr.CheckboxGroup(choices=["Queens", "Brooklyn", "Manhattan", "Bronx", "Staten Island"], value=["Queens", "Brooklyn"], label="Select Boroughs:")
         btn = gr.Button(value="Update Filter")
-        map = gr.Plot().style()
+        map = gr.Plot()
     demo.load(filter_map, [min_price, max_price, boroughs], map)
     btn.click(filter_map, [min_price, max_price, boroughs], map)
 
